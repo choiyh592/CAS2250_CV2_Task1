@@ -10,7 +10,6 @@
 실패한 단계는 logs/<단계>.failed.txt 로 남기고 다음 단계로 넘어갑니다.
 """
 import json
-import re
 import shutil
 import statistics as st
 import subprocess
@@ -149,8 +148,9 @@ def summarize():
           "|---|" + "---|" * (len(T0_SCHEDULES) + 1)]
     for ns in T0_EVAL_STEPS:
         ds = [ms([r["steps"][str(ns)]["d"] for r in t0[sch]]) for sch in T0_SCHEDULES]
-        L.append(f"| {ns} | " + " | ".join(ds) + f" | {ms([r['steps'][str(ns)]['sec_per_100'] for r in t0['cosine']], '.3f')} |")
-    L += ["", f"held-out 실데이터 d (바닥): {ms([r['floor_real_heldout'] for r in t0['cosine']])}", ""]
+        L.append(f"| {ns} | " + " | ".join(ds) + f" | {ms([r['steps'][str(ns)]['sec_per_100'] for r in t0['cosine']], '.4f')} |")
+    L += ["", f"held-out 실데이터 d (바닥): {ms([r['floor_real_heldout'] for r in t0['cosine']])}",
+          "sec/100: eval.py 가 준비 실행·CUDA 동기화 없이 첫 스텝 수(3)부터 재므로, 3스텝 값에는 첫 호출 오버헤드가 섞였을 수 있음", ""]
 
     L += [f"## Tier 1 main (lr {T1_LR:g}) — guidance w 별 네 축", ""]
     t1 = loads([f"results_tier1_seed{s}.json" for s in SEEDS])
@@ -159,6 +159,8 @@ def summarize():
         g = lambda k: [r["w"][str(float(w))][k] for r in t1]
         L.append(f"| {w} | {ms(g('fidelity'), '.3f')} | {ms(g('class_match'), '.3f')} | "
                  f"{ms(g('coverage_entropy'), '.3f')} | {ms(g('variety_ratio'), '.3f')} | {ms(g('nn_to_train'), '.2f')} |")
+    L.append(f"| real (test, 첫 1,000장) | {ms([r['real']['fidelity'] for r in t1], '.3f')} | — | — | 1 (정의상) | "
+             f"{ms([r['real']['nn_to_train'] for r in t1], '.2f')} |")
     L += ["", f"held-out 실데이터 NN-to-train (암기 기준선): {ms([r['real']['nn_to_train'] for r in t1], '.2f')}",
           f"평가용 분류기 정확도: {ms([r['classifier_acc'] for r in t1])}", ""]
 
@@ -184,13 +186,17 @@ def summarize():
     for sch in T0_SCHEDULES:
         L.append(f"- Tier 0 {sch} 학습: {ms([t['train_minutes'] for t in loads([f'tier0_{sch}_seed{s}_train.json' for s in SEEDS])], '.1f')} 분")
     L.append(f"- Tier 1 main 학습 ({T1_EPOCHS} epoch): {ms([t['train_minutes'] for t in loads([f'tier1_cosine_seed{s}_train.json' for s in SEEDS])], '.1f')} 분")
-    secs = []
-    for s in SEEDS:
-        p = LOGS / f"sample_t1_main_s{s}.txt"
-        hit = p.exists() and re.search(r"100샘플당 ([\d.]+)초", p.read_text(encoding="utf-8"))
-        if hit:
-            secs.append(float(hit.group(1)))
-    L.append(f"- Tier 1 샘플링 ({T1_SAMPLE_STEPS}스텝, w=1): {ms(secs, '.2f')} 초 / 100샘플")
+    # 보고서와 같은 출처: report_figures.py 의 step sweep (시드당 500장, CUDA 동기화). sample.py 로그(64장)는 쓰지 않음
+    sweep = {}
+    p = RESULTS / "figures" / "extra_numbers.json"
+    if p.exists():
+        sweep = json.load(open(p, encoding="utf-8")).get("A_t1_step_sweep_w1", {})
+    if sweep and T1_SAMPLE_STEPS in sweep["steps"]:
+        i = sweep["steps"].index(T1_SAMPLE_STEPS)
+        secs = [row[i] for row in sweep["uniform"]["sec_per_100"]]
+        L.append(f"- Tier 1 샘플링 ({T1_SAMPLE_STEPS}스텝, w=1, 시드당 500장): {ms(secs, '.2f')} 초 / 100샘플")
+    else:
+        L.append(f"- Tier 1 샘플링 ({T1_SAMPLE_STEPS}스텝, w=1): 미측정 (report_figures.py 실행 후 갱신)")
     L += ["", "샘플링 전용 실험(스텝 간격, guidance 구간 등)의 숫자: results/figures/extra_numbers.json"]
 
     (RESULTS / "summary.md").write_text("\n".join(L) + "\n", encoding="utf-8")
@@ -200,6 +206,7 @@ def summarize():
 def report():
     collect()
     summarize()
+    run("eda", RESULTS / "eda.json", "eda.py")      # Section 2 numbers and Figure 1
     print("[run ] report_figures", flush=True)
     LOGS.mkdir(exist_ok=True)
     with open(LOGS / "report_figures.txt", "w", encoding="utf-8") as f:
@@ -207,6 +214,7 @@ def report():
     if r.returncode:
         FAILED.append("report_figures")
         print("[FAIL] report_figures -> logs/report_figures.txt (그림 일부 실패)", flush=True)
+    summarize()                                 # extra_numbers.json 이 새로 생겼을 수 있으니 요약을 다시 씀
 
 
 if __name__ == "__main__":

@@ -42,7 +42,7 @@ T0_SCATTER_STEPS = [3, 10, 50, 200]
 SPACING_STEPS_T0 = [3, 5, 10, 20, 50]          # 실험 A, Tier 0
 SWEEP_STEPS_T1 = [5, 10, 20, 50, 100]          # 실험 A, Tier 1 (w=1)
 GUIDE_W = [1, 3, 5, 8]                         # 실험 B
-GUIDE_INTERVAL = (200, 700)                    # 이 t 구간에서만 guidance. 숫자 모양이 정해지는 구간 (slide 12: t=450 읽힘, 600 사라짐)
+GUIDE_INTERVAL = (200, 700)                    # guidance only for t in this range: the 450-600 transition seen in Fig. A7 (lecture slide 12), widened to 200-700 as a margin; not tuned
 N_T1 = 500                                     # 실험용 Tier 1 샘플 수 (eval.py 는 1000)
 N_T0 = 1000                                    # eval.py 와 같게 -> 균등 간격 d 가 eval.py 숫자와 일치해야 함
 FORWARD_T = [0, 100, 200, 300, 450, 600, 800, 999]
@@ -347,12 +347,15 @@ def fig12_guidance_tradeoff():
     fig, ax = plt.subplots(1, 3, figsize=(13, 3.4))
     for k, lab in [("fidelity", "fidelity"), ("class_match", "class match")]:
         mu, sd = g(k); ax[0].errorbar(ws, mu, yerr=sd, marker="o", capsize=3, label=lab)
+    real_fid_mean, real_fid_sd = mean_std([r["real"]["fidelity"] for r in rs])
+    ax[0].axhline(real_fid_mean, ls="--", color="gray", lw=1,
+                  label=f"real-test fidelity ({real_fid_mean:.3f} ± {real_fid_sd:.3f})")
     mu, sd = g("variety_ratio"); ax[1].errorbar(ws, mu, yerr=sd, marker="o", capsize=3, color="tab:green")
     ax[1].axhline(1, ls="--", color="gray", lw=1, label="real data")
     mu, sd = g("nn_to_train"); ax[2].errorbar(ws, mu, yerr=sd, marker="o", capsize=3, color="tab:red", label="generated")
     real = np.mean([r["real"]["nn_to_train"] for r in rs])
     ax[2].axhline(real, ls="--", color="gray", label=f"real held-out ({real:.2f})")
-    for a, t in zip(ax, ["fidelity (↑)", "within-class variety vs real (↑)", "NN-to-train (must stay above real)"]):
+    for a, t in zip(ax, ["fidelity (↑)", "within-class variety / real", "NN-to-train (real-data reference)"]):
         a.set_xlabel("guidance w"); a.set_title(t, fontsize=10); a.legend(fontsize=8); a.grid(alpha=0.3)
     fig.suptitle(f"Guidance trade-off (main, mean ± std over {len(rs)} seeds)", y=1.03)
     save(fig, "fig12_guidance_tradeoff.png")
